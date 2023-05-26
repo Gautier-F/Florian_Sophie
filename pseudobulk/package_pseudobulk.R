@@ -1,9 +1,38 @@
 
+# matrice pseudobulk
+
+PseudobulkMatrix = function(so, resolution, save = TRUE){
+
+    count_mtx = so[["RNA"]]@data
+
+    res = set_epi@meta.data[, resolution]
+
+    df_pb = data.frame(row.names = rownames(count_mtx))
+
+    for (c in sort(unique(res))){
+        cluster_mean=c()
+        cluster_matrix = count_mtx[, res == c]
+        for (g in rownames(df_pb)){
+            g_xp = cluster_matrix[g,]
+            count_gene = sum(g_xp)
+            #### on ne compte que les cellules exprimant le gène        
+            mean_gene = count_gene/sum(g_xp !=0)
+            cluster_mean = append(cluster_mean, mean_gene)
+        }
+        df_pb = cbind(df_pb, cluster_mean)
+    }
+    if(save == TRUE){
+        saveRDS(df_pb, paste(so, "_counts_pseudobulk.rds"))
+        }else{
+            return(df_pb)
+        }
+}
+
 # Calcul du score pseudobulk ( cf AddModuleScore)
 
 
-score_pseudobulk = function(counts, genes_list){
-
+ScorePseudobulk = function(mtx_pb, genes_list){
+    count = mtx_pb
     # expression moyenne des gènes sur la population totale des cellules
     count_mean = Matrix::rowMeans(counts, na.rm = TRUE)
     count_mean = count_mean[!is.na(count_mean)]
@@ -45,14 +74,24 @@ score_pseudobulk = function(counts, genes_list){
 }
 
 # attribution du score aux cellules du cluster
-ExpandScore = function(score, so, resolution, name_score){ 
+ExpandScore = function(score, so, resolution, sig_name){ 
         num_res = as.numeric(levels(so@meta.data[,resolution])[so@meta.data[,resolution]])
     for (c in sort(unique(so@meta.data[,resolution]))){
         cell_score_cluster = as.vector(score[paste("cluster_", c, sep="")])
         num_res[num_res == c] = cell_score_cluster
     }
-    so@meta.data[,name_score] = num_res
+    so@meta.data[,sig_name] = num_res
     return(so)
+}
+
+ScorePseudobulkFromList = function(list_mtx_pb, list_so, gene_sig_list, resolution, sig_name){
+    # calcul du score pb pour chacune des matrices pseudobulk de la liste pseudo bulk
+    list_score = lapply(list_mtx_pb, ScorePseudobulk(x, gene_sig_list))
+    # attribution du score pour chacun des so de la liste so 
+    list_so = mapply(ExpandScore(x, y, resolution, sig_name),
+                    list_score, 
+                    list_so)
+    return(list_so)
 }
 
 
@@ -75,14 +114,14 @@ CoordClusterLabel = function(so, resolution){
 
 
 
-PlotPseudobulk = function(so, resolution, name_signature, title =""){
+PlotPseudobulk = function(so, resolution, sig_namenature, title =""){
     require(ggplot2)
     require(RColorBrewer)
     require(ggpubr)
 
     coord_label_cluster = CoordClusterLabel(so, resolution)
     df_coord = as.data.frame(so@reductions$umap@cell.embeddings)
-    score = so@meta.data[, name_signature]
+    score = so@meta.data[, sig_namenature]
 
     # création fonction ramp_palette 
     palette_purd = brewer.pal(9, "PuRd")
@@ -91,7 +130,7 @@ PlotPseudobulk = function(so, resolution, name_signature, title =""){
     color_score = ramp_palette(length(unique(score)))
 
     # add legend 
-    fp = FeaturePlot(so, features = name_signature,
+    fp = FeaturePlot(so, features = sig_namenature,
                 label = TRUE, label.size = 7) + 
                 scale_color_gradientn(colours = brewer.pal(n = 9, name = "PuRd" ))
 
@@ -114,13 +153,15 @@ PlotPseudobulk = function(so, resolution, name_signature, title =""){
 }
 
 # plot from list of so
-PlotPseudobulkFromList = function(list_so, resolution, sig_name, list_title){
+PlotPseudobulkFromList = function(list_so, resolution, sig_name){
+
+                                so_names = names(list_so)
 
                                 # création list_grob
                                 list_grob = list()
                                 for (i in 1:length(list_so)){
                                     so = list_so[[i]]
-                                    p = PlotPseudobulk(so, resolution, sig_name, title = list_title[i]);
+                                    p = PlotPseudobulk(so, resolution, sig_name, title = so_names[i]);
                                     p = ggplotify::as.grob(p)
                                     list_grob = append(list_grob, list(p))
                                 }
@@ -134,7 +175,7 @@ PlotPseudobulkFromList = function(list_so, resolution, sig_name, list_title){
 
 # HEATMAP
 # data frame des scores par cluster
-MakeDFHeatmap = function(list_set, resolution, name_sig){
+MakeScoreDF = function(list_set, resolution, sig_name){
 
     try(if(length(names(list_set)) != length(list_set))
             stop("List's sets must have a name.", call. = FALSE))
@@ -142,9 +183,9 @@ MakeDFHeatmap = function(list_set, resolution, name_sig){
     set_name = names(list_set)
     
     list_score = lapply(list_set, function(x, y){
-        score_sc = x@meta.data[, c(resolution, name_sig)]
+        score_sc = x@meta.data[, c(resolution, sig_name)]
         score_sc = score_sc[order(score_sc[, resolution]), ]
-        score_cluster = data.frame(unique(score_sc[, name_sig]))
+        score_cluster = data.frame(unique(score_sc[, sig_name]))
         return(score_cluster)
         })
     df = data.frame(row.names = paste("cluster_", sort(unique(list_set[[1]]@meta.data[, resolution])), sep = ""))
@@ -180,10 +221,8 @@ HeatmapLogRatio = function(df_score){
     min_max_neg = min_max < 0
     if(sum(min_max_neg) == 1){
         breaks = c(-max(abs(min_max)), -max(abs(min_max))/2, 0, max(abs(min_max))/2, max(abs(min_max)))
-        print("1er")
         }else{
         breaks = seq(min_max[1], min_max[2], length.out = 5)
-        print("2eme")
         }
 
     purd = brewer.pal(9, "PuRd")
@@ -206,5 +245,14 @@ HeatmapLogRatio = function(df_score){
 }
 
 
-
+PlotResultsPseudobulk = function(list_so, resolution, sig_name, title){
+    df_score = MakeScoreDF(list_so, resolution, sig_name)
+    df_score = LogRatioDE(df_score)
+    hm = HeatmapLogRatio(df_score) 
+    plt = PlotPseudobulkFromList(list_so, resolution, sig_name) 
+    pdf(paste(title, ".pdf", sep = ""))
+    print(plt)
+    print(hm)
+    dev.off()
+}
 
