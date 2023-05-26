@@ -130,3 +130,81 @@ PlotPseudobulkFromList = function(list_so, resolution, sig_name, list_title){
                                                     ncol = 2, scale = 0.9)
 
                                 }
+
+
+# HEATMAP
+# data frame des scores par cluster
+MakeDFHeatmap = function(list_set, resolution, name_sig){
+
+    try(if(length(names(list_set)) != length(list_set))
+            stop("List's sets must have a name.", call. = FALSE))
+
+    set_name = names(list_set)
+    
+    list_score = lapply(list_set, function(x, y){
+        score_sc = x@meta.data[, c(resolution, name_sig)]
+        score_sc = score_sc[order(score_sc[, resolution]), ]
+        score_cluster = data.frame(unique(score_sc[, name_sig]))
+        return(score_cluster)
+        })
+    df = data.frame(row.names = paste("cluster_", sort(unique(list_set[[1]]@meta.data[, resolution])), sep = ""))
+    for ( c in names(list_set)){
+        df = cbind(df, list_score[c])
+    }
+    colnames(df) = names(list_score)
+    return(df)
+}
+
+# log2 ratio des comparaisons
+
+LogRatioDE = function(df_score){
+
+    combinaisons = combn(names(df_score), 2) # matrice 2xcomb(5,2)
+    names_score = names(df_score)
+    names_ratio = c()
+    for (i in 1: ncol(combinaisons)){
+        comb = combinaisons[,i]
+        score_comb = log2(df_score[, comb[2]] / df_score[, comb[1]])
+        name_comb = paste(comb[2], "/", comb[1], sep = " ")
+        names_ratio = append(names_ratio, name_comb)
+        df_score = cbind(df_score, score_comb)  
+    }
+    names(df_score) = c(names_score, names_ratio)
+    return(df_score)
+}
+
+HeatmapLogRatio = function(df_score){
+    df_ratio = df_score[, grep("/", colnames(df_score))]
+
+    min_max = c(min(df_ratio), max(df_ratio))
+    min_max_neg = min_max < 0
+    if(sum(min_max_neg) == 1){
+        breaks = c(-max(abs(min_max)), -max(abs(min_max))/2, 0, max(abs(min_max))/2, max(abs(min_max)))
+        print("1er")
+        }else{
+        breaks = seq(min_max[1], min_max[2], length.out = 5)
+        print("2eme")
+        }
+
+    purd = brewer.pal(9, "PuRd")
+    bugn = brewer.pal(9, "BuGn")
+
+    pal_pos = purd[c(1, 5, 9)]
+    pal_neg = bugn[c(9,5)]
+    pal = c(pal_neg, pal_pos)
+    col_fun = circlize::colorRamp2(breaks, pal)
+
+    hm_logratio_score = Heatmap(as.matrix(df_ratio), 
+        heatmap_legend_param = list(title = "Log2(ratio)"),
+        column_names_gp = gpar(fontsize = 8, fontface = "bold"),
+        column_names_rot = 45, 
+        col = col_fun,
+        column_title = "Log2 score ratio",
+        column_title_gp = gpar(fontface = "bold"))
+    
+    return(hm_logratio_score)
+}
+
+
+
+
